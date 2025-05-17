@@ -14,9 +14,11 @@ func main() {
 
 	// Crear servicio
 	studentService := services.NewStudentService()
-
+	subjectService := services.NewSubjectService()
+	gradeService := services.NewGradeService()
+ 
 	// Configurar rutas
-	routes.SetupStudentRoutes(r, studentService)
+	routes.SetupAllRoutes(r, studentService, subjectService, gradeService)
 
 	// Iniciar servidor
 	fmt.Println("Server running on port 3000")
