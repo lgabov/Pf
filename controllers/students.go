@@ -5,13 +5,12 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
-	"pf/services"
+	"pf/services" 
 )
 
 type StudentController struct {
 	studentService *services.StudentService
 }
-
 
 func NewStudentController(studentService *services.StudentService) *StudentController {
 	return &StudentController{
@@ -20,7 +19,7 @@ func NewStudentController(studentService *services.StudentService) *StudentContr
 }
 
 func (s *StudentController) GetStudent(c *gin.Context) {
-	idStr := c.Param("id")
+	idStr := c.Param("student_id")
 	id, err := strconv.Atoi(idStr)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -30,16 +29,22 @@ func (s *StudentController) GetStudent(c *gin.Context) {
 		return
 	}
 
-	
-	student, err := s.studentService.GetStudent(id)
+	student, err := s.studentService.GetStudentByID(c.Request.Context(), id)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"message": "Error to get student",
-			"error":   err.Error(),
-		})
+		if err == services.ErrStudentNotFound {
+			c.JSON(http.StatusNotFound, gin.H{
+				"message": "student not found",
+				"error":   err.Error(),
+			})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"message": "error getting student",
+				"error":   err.Error(),
+			})
+		}
 		return
 	}
-	c.JSON(http.StatusOK, student) 
+	c.JSON(http.StatusOK, student)
 }
 
 func (s *StudentController) CreateStudent(c *gin.Context) {
@@ -52,10 +57,10 @@ func (s *StudentController) CreateStudent(c *gin.Context) {
 		return
 	}
 
-	createdStudent, err := s.studentService.CreateStudent(student)
+	createdStudent, err := s.studentService.CreateStudent(c.Request.Context(), &student)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"message": "Error to create student",
+			"message": "error creating student",
 			"error":   err.Error(),
 		})
 		return
@@ -75,7 +80,7 @@ func (s *StudentController) UpdateStudent(c *gin.Context) {
 		return
 	}
 
-	var student services.Student 
+	var student services.Student
 	if err := c.ShouldBindJSON(&student); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"message": "invalid request body",
@@ -84,12 +89,19 @@ func (s *StudentController) UpdateStudent(c *gin.Context) {
 		return
 	}
 
-	updatedStudent, err := s.studentService.UpdateStudent(id, student)
+	updatedStudent, err := s.studentService.UpdateStudent(c.Request.Context(), id, &student)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{
-			"message": "student not found", 
-			"error":   err.Error(),
-		})
+		if err == services.ErrStudentNotFound {
+			c.JSON(http.StatusNotFound, gin.H{
+				"message": "student not found",
+				"error":   err.Error(),
+			})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"message": "error updating student",
+				"error":   err.Error(),
+			})
+		}
 		return
 	}
 
@@ -101,27 +113,30 @@ func (s *StudentController) DeleteStudent(c *gin.Context) {
 	id, err := strconv.Atoi(idStr)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"message": "invalid ID",
+			"message": "invalid student ID",
 			"error":   err.Error(),
 		})
 		return
 	}
 
-	err = s.studentService.DeleteStudent(id)
+	err = s.studentService.DeleteStudent(c.Request.Context(), id)
 	if err != nil {
-		status := http.StatusInternalServerError
-		if err.Error() == "student not found" { 
-			status = http.StatusNotFound
+		if err == services.ErrStudentNotFound {
+			c.JSON(http.StatusNotFound, gin.H{
+				"message": "student not found",
+				"error":   err.Error(),
+			})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"message": "error deleting student",
+				"error":   err.Error(),
+			})
 		}
-		c.JSON(status, gin.H{
-			"message": "Error to delete student", 
-			"error":   err.Error(),
-		})
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"message": "student deleted successfully", 
+		"message": "student deleted successfully",
 		"id":      id,
 	})
 }

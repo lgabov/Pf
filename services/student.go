@@ -1,64 +1,180 @@
 package services
 
-import "fmt"
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"time"
+)
 
-type Student struct {  
-    ID    int    `json:"id"`
-    Group string `json:"group"`
-    Name  string `json:"name"` 
-    Email string `json:"email"`
+var (
+	ErrStudentNotFound  = errors.New("student not found")
+	ErrInvalidInput     = errors.New("invalid input data")
+	ErrDatabase         = errors.New("database error")
+)
+
+type Student struct {
+	ID        int       `json:"id"`
+	Group     string    `json:"group"`
+	Name      string    `json:"name"`
+	Email     string    `json:"email"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 type StudentService struct {
-    students []Student
+	db *sql.DB
 }
 
-func NewStudentService() *StudentService {  
-    return &StudentService{
-        students: []Student{},
-    }
+func NewStudentService(db *sql.DB) *StudentService {
+	return &StudentService{db: db}
 }
 
-func (s *StudentService) GetStudents() []Student {
-    return s.students
+// GetStudents retrieves all students with pagination support
+func (s *StudentService) GetStudents(ctx context.Context, limit, offset int) ([]Student, error) {
+	query := `
+		SELECT id, group_name, name, email, created_at
+		FROM students 
+		ORDER BY id 
+		LIMIT $1 OFFSET $2
+	`
+
+	rows, err := s.db.QueryContext(ctx, query, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrDatabase, err)
+	}
+	defer rows.Close()
+
+	var students []Student
+	for rows.Next() {
+		var student Student
+		err := rows.Scan(
+			&student.ID,
+			&student.Group,
+			&student.Name,
+			&student.Email,
+			&student.CreatedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrDatabase, err)
+		}
+		students = append(students, student)
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrDatabase, err)
+	}
+
+	return students, nil
 }
 
-func (s *StudentService) GetStudent(id int) (Student, error) {
-    for _, student := range s.students {
-        if student.ID == id {
-            return student, nil
-        }
-    }
-    return Student{}, fmt.Errorf("student not found")
+// GetStudentByID retrieves a single student by ID
+func (s *StudentService) GetStudentByID(ctx context.Context, id int) (*Student, error) {
+	query := `
+		SELECT id, group_name, name, email, created_at
+		FROM students 
+		WHERE id = $1
+	`
+
+	var student Student
+	err := s.db.QueryRowContext(ctx, query, id).Scan(
+		&student.ID,
+		&student.Group,
+		&student.Name,
+		&student.Email,
+		&student.CreatedAt,
+	)
+
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return nil, ErrStudentNotFound
+	case err != nil:
+		return nil, fmt.Errorf("%w: %v", ErrDatabase, err)
+	}
+
+	return &student, nil
 }
 
-func (s *StudentService) CreateStudent(student Student) (Student, error) {
-    if student.Name == "" || student.Email == "" {
-        return Student{}, fmt.Errorf("name and email are required")
-    }
-    student.ID = len(s.students) + 1
-    s.students = append(s.students, student)
-    return student, nil
+// CreateStudent creates a new student record
+func (s *StudentService) CreateStudent(ctx context.Context, student *Student) (*Student, error) {
+	if student.Name == "" || student.Email == "" {
+		return nil, fmt.Errorf("%w: name and email are required", ErrInvalidInput)
+	}
+
+	query := `
+		INSERT INTO students (group_name, name, email) 
+		VALUES ($1, $2, $3) 
+		RETURNING id, group_name, name, email, created_at
+	`
+
+	err := s.db.QueryRowContext(ctx, query,
+		student.Group,
+		student.Name,
+		student.Email,
+	).Scan(
+		&student.ID,
+		&student.Group,
+		&student.Name,
+		&student.Email,
+		&student.CreatedAt,
+	)
+
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrDatabase, err)
+	}
+
+	return student, nil
 }
 
-func (s *StudentService) UpdateStudent(id int, updatedStudent Student) (Student, error) {
-    for i, student := range s.students {  
-        if student.ID == id {
-            s.students[i].Group = updatedStudent.Group
-            s.students[i].Name = updatedStudent.Name
-            s.students[i].Email = updatedStudent.Email
-            return s.students[i], nil  
-        }
-    }
-    return Student{}, fmt.Errorf("student not found")  
+// UpdateStudent updates an existing student record
+func (s *StudentService) UpdateStudent(ctx context.Context, id int, student *Student) (*Student, error) {
+	query := `
+		UPDATE students 
+		SET group_name = $1, name = $2, email = $3 
+		WHERE id = $4
+		RETURNING id, group_name, name, email, created_at
+	`
+
+	var updatedStudent Student
+	err := s.db.QueryRowContext(ctx, query,
+		student.Group,
+		student.Name,
+		student.Email,
+		id,
+	).Scan(
+		&updatedStudent.ID,
+		&updatedStudent.Group,
+		&updatedStudent.Name,
+		&updatedStudent.Email,
+		&updatedStudent.CreatedAt,
+	)
+
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return nil, ErrStudentNotFound
+	case err != nil:
+		return nil, fmt.Errorf("%w: %v", ErrDatabase, err)
+	}
+
+	return &updatedStudent, nil
 }
 
-func (s *StudentService) DeleteStudent(id int) error {
-    for i, student := range s.students {
-        if student.ID == id {
-            s.students = append(s.students[:i], s.students[i+1:]...)
-            return nil  
-        }
-    }
-    return fmt.Errorf("student not found")
+// DeleteStudent deletes a student record
+func (s *StudentService) DeleteStudent(ctx context.Context, id int) error {
+	query := "DELETE FROM students WHERE id = $1"
+	result, err := s.db.ExecContext(ctx, query, id)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrDatabase, err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrDatabase, err)
+	}
+
+	if rowsAffected == 0 {
+		return ErrStudentNotFound
+	}
+
+	return nil
 }
